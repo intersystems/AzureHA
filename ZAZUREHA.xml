@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25" zv="Cache for Windows (x86-64) 2016.1 (Build 610U)" ts="2016-07-01 14:21:32">
+<Routine name="ZAZUREHA" type="MAC" languagemode="0" timestamp="64100,51671.38319"><![CDATA[
+ZAZUREHA	;
+quit  ;don't enter at the top
+#include %occStatus
+
+UpdateAzureLoadBalancer(oauthInfo, networkingInfo, nodesInfo, sslConfig) PUBLIC{
+  	try {
+	//Set the primary node to current node	
+	Set primary = nodesInfo."0"
+	Set secondary = nodesInfo."1"
+	
+	//TODO: Check for cases where none of the node name matches the hostname, bad config exception.
+	if nodesInfo."1".name = $SYSTEM.INetInfo.LocalHostName() {
+		Set primary = nodesInfo."1"
+		Set secondary = nodesInfo."0"		 
+		}
+	
+	//Get access token
+	Set accessToken = $$GetAccesTokenCredentials(oauthInfo.clientId,oauthInfo.clientSecret,oauthInfo.tenantId,sslConfig)
+		
+	Set primaryRequest = $$GetInternalLoadBalancerUpdateRequestBody(networkingInfo.subscriptionId,networkingInfo.resourceGroup,networkingInfo.location,primary.name,primary.nicname,primary.ipconfigname,networkingInfo.vnetName,networkingInfo.subnetName,networkingInfo.ilbName,networkingInfo.ilbPoolName) 		
+	Set secondaryRequest = $$GetInternalLoadBalancerUpdateRequestBody(networkingInfo.subscriptionId,networkingInfo.resourceGroup,networkingInfo.location,secondary.name,secondary.nicname,secondary.ipconfigname,networkingInfo.vnetName,networkingInfo.subnetName,networkingInfo.ilbName,"")
+	
+	
+	Do PutIlbRequest(networkingInfo.subscriptionId, networkingInfo.resourceGroup, accessToken, sslConfig,primary.nicname, primaryRequest)	 	
+	Do PutIlbRequest(networkingInfo.subscriptionId, networkingInfo.resourceGroup, accessToken, sslConfig, secondary.nicname,secondaryRequest)	 		
+
+	} 
+	catch (SysEx) {
+        set retStatus = $$$OK
+		if ($isobject(SysEx)) {
+			set retStatus = SysEx.AsStatus()
+			do ##class(%SYS.System).WriteToConsoleLog("Call to Azure ILB Successful For Virtual IP",0,0)
+			
+		} 
+		else {
+			set retStatus = $$$ERROR($$$GeneralError, "ZAZUREHAUnknownError")
+			do ##class(%SYS.System).WriteToConsoleLog("Call to Azure ILB Failed For Virtual IP",1,2)
+		}
+    }
+}
+
+
+
+
+GetInternalLoadBalancerUpdateRequestBody(subscriptionId,resourceGroup,location,vmName,nicName,ipconfigName,vnetName,subnetName,ilbName,ilbPoolName) PUBLIC {	
+
+	Set resourceGroupId ="/subscriptions/"_subscriptionId_"/resourceGroups/"_resourceGroup
+	Set vmId = resourceGroupId _ "/providers/Microsoft.Compute/virtualMachines/" _vmName
+	Set nicId = resourceGroupId _ "/providers/Microsoft.Network/networkInterfaces/" _nicName
+	Set ipconfigId = nicId _ "/ipConfigurations/" _ ipconfigName 
+	Set subnetId = resourceGroupId _ "/providers/Microsoft.Network/virtualNetworks/"_vnetName_"/subnets/" _subnetName	
+	Set ilbPoolId =resourceGroupId _ "/providers/Microsoft.Network/loadBalancers/"_ilbName_"/backendAddressPools/" _ilbPoolName
+	
+	Set backendPool =[]
+	if ilbPoolName '= "" {
+		Set backendPool =[{"id":ilbPoolId}]	
+	}
+	
+	Set ipConfigurations = {"ipConfigurations":[{"properties" : { "loadBalancerBackendAddressPools" : backendPool,"subnet" : {"id" :  subnetId}},"name":ipconfigName,"id":ipconfigId}]}
+	Set vmInfo ={"virtualMachine":{"id":vmId}}
+	
+	Set requestPayload ={"properties":{"ipConfigurations":[{"id":ipconfigId,"properties" : { "loadBalancerBackendAddressPools" : backendPool,"subnet" : {"id" :  subnetId}},"name":ipconfigName}],"virtualMachine":{"id":vmId}}}	
+	Set requestPayload.location=location
+	Set requestPayload.type="Microsoft.Network/networkInterfaces"	
+	Set requestPayload.name=nicName
+	Set requestPayload.id=nicId
+	
+	Quit requestPayload.$toJSON()
+		
+	}	
+	
+PutIlbRequest(subscriptionId, resourceGroup,accessToken, sslConfiguration, nicName, payload) PUBLIC {
+				
+	Set request=##class(%Net.HttpRequest).%New()
+ 	Set request.SSLConfiguration=sslConfiguration
+ 	Set request.Https=1 	
+ 	Set request.Server="management.azure.com"
+ 	Set request.ContentType ="application/json"
+ 	   
+	Do request.SetHeader("Authorization","Bearer " _ accessToken)
+	Do request.EntityBody.Write(payload)
+ 	Set status =  request.Put("/subscriptions/"_ subscriptionId _ "/resourceGroups/" _ resourceGroup _ "/providers/Microsoft.Network/networkInterfaces/"_ nicName _"?api-version=2015-05-01-preview") 	
+ 	
+	if request.SSLError '= "" 
+	{
+			throw ##class(%Exception.General).%New("SSL Configuration Exception","100",,
+	                             request.SSLError)
+		}
+	
+	Set responseData = request.HttpResponse.Data.Read(request.HttpResponse.ContentLength,status)
+ 		
+	if request.HttpResponse.StatusCode '= 200
+	{
+		throw ##class(%Exception.General).%New("Error ","100",,
+	                             "Status Code:" _ request.HttpResponse.StatusCode _" Data:" _ responseData)
+		}
+	 	
+ 	
+ 	if responseData = ""
+ 	{
+	 	Quit
+ 	}
+	
+	Quit ##class(%AbstractObject).$fromJSON(responseData)
+ 	 	 		  
+	}
+
+GetAccesTokenCredentials(clientId, clientSecret, tenantId, sslConfiguration) PUBLIC{
+		
+	Set endPoint = "login.microsoftonline.com/"_ tenantId _"/oauth2/token"
+	
+	Set request=##class(%Net.HttpRequest).%New()
+ 	Set request.SSLConfiguration=sslConfiguration
+ 	Set request.Https=1 	
+ 	Set request.Server="login.microsoftonline.com"
+ 	   
+	Do request.InsertFormData("grant_type","client_credentials")
+	Do request.InsertFormData("client_id",clientId)
+	Do request.InsertFormData("client_secret",clientSecret)
+	Do request.InsertFormData("resource","https://management.core.windows.net/")
+    
+ 	Set status =  request.Post("/"_ tenantId _"/oauth2/token") 	
+ 	Set error = request.SSLError
+
+	if error '= "" 
+	{
+		throw ##class(%Exception.General).%New("SSL Configuration Exception","100",,
+                             request.SSLError)
+	}
+ 	
+ 	Set jsonData = request.HttpResponse.Data.Read(request.HttpResponse.ContentLength,status)
+ 	
+ 	Set data = ##class(%AbstractObject).$fromJSON(jsonData)
+ 	
+ 	Set token = data."access_token"
+ 	
+ 	Quit token
+ 	
+}
+
+]]></Routine>
+</Export>

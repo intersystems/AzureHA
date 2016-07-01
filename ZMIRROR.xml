@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25" zv="Cache for Windows (x86-64) 2016.1 (Build 610U)" ts="2016-07-01 14:29:08">
+<Routine name="ZMIRROR" type="MAC" languagemode="0" timestamp="64100,49498.340073"><![CDATA[
+ZMIRROR	;
+		quit  ;don't enter at the top
+#include %occStatus
+#include %syMirror
+
+#ifndef FailoverMemberType
+#define FailoverMemberType 0
+#endif
+
+
+CheckBecomePrimaryOK() PUBLIC {
+	
+	Do logMsg("CheckBecomePrimaryOK^ZMIRROR() invoked")
+	
+  	Set oauthInfo ={"clientId":"ENTER CLIENT ID","clientSecret":"ENTER CLIENT SECRET","tenantId":"ENTER TENANT ID"} 	
+  	Set networkingInfo={"location":"ENTER LOCATION","subscriptionId":"ENTER SUBSCRIPTION ID","resourceGroup":"ENTER RESOURCE GROUP","ilbName":"ENTER ILB NAME","ilbPoolName":"ENTER ILB POOL NAME","vnetName":"ENTER VNET NAME","subnetName":"ENTER SUBNET NAME"}
+  	Set nodesInfo =[{"name":"ENTER NODE 1 NAME","nicname":"ENTER NODE 1 NIC NAME","ipconfigname":"ENTER NODE 1 IPCONFIG NAME"},{"name":"ENTER NODE 2 NAME","nicname":"ENTER NODE 2 NIC NAME","ipconfigname":"ENTER NODE 2 IPCONFIG NAME"}]
+  	Set sslConfig ="ENTER SSL CONFIGURATION"
+  					
+	Do UpdateAzureLoadBalancer^ZAZUREHA(oauthInfo, networkingInfo, nodesInfo, sslConfig)
+		
+	Quit 1 
+
+}
+
+
+
+	/*
+		logMsg^ZMIRROR: Helper sub
+		Log the passed message into the next node in ^ZMIRRORINFO
+	*/
+logMsg(msg) PRIVATE {
+	set ^ZMIRRORINFO($i(^ZMIRRORINFO))=$zdatetime($now(),1,1,3)_"|"_msg
+	quit
+}
+
+]]></Routine>
+</Export>
